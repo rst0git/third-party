@@ -28,11 +28,48 @@
 # but please minimize the amount of data and the number of layers that end up in the
 # final image.
 
+# Create an image with tools used as a base for the next layers
+FROM ubuntu:20.04 as base-builder
+RUN RUN apt-get update && apt-get install -y --no-install-recommends \
+  autoconf \
+  automake \
+  bison \
+  build-essential \
+  ca-certificates \
+  cmake \
+  cython \
+  flex \
+  g++ \
+  libavl-dev \
+  libboost-dev \
+  libboost-test-dev \
+  libev-dev \
+  libevent-dev \
+  libffi-dev \
+  libmemcached-dev \
+  libpcap-dev \
+  libpcre3-dev \
+  libprotobuf-c-dev \
+  libssl-dev \
+  libtool \
+  make \
+  pkg-config \
+  protobuf-c-compiler
+  python3 \
+  python3-dev \
+  python3-pip \
+  python3-setuptools
+
+# Protobuf is using a deprecated technique to install Python package with
+# easy install. This is causing issues since 2021-04-21. (https://discuss.python.org/t/pypi-org-recently-changed/8433)
+# We have to install pip and install six ourselves so we do not trigger the
+# broken protobuf install process.
+RUN pip3 install --user --ignore-installed wheel six cffi pypcap
+
 # Build ccache.
-FROM ubuntu:20.04 as ccache
+FROM base-builder as ccache
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV CCACHE_DEPS autoconf automake build-essential libmemcached-dev
 ENV CFLAGS="-Os"
 ENV CXXFLAGS="-Os"
 ENV LDFLAGS="-Wl,-s"
@@ -40,7 +77,6 @@ RUN mkdir -p /output/usr/local
 ENV PYTHONUSERBASE=/output/usr/local
 COPY ./ccache /ccache/
 WORKDIR /ccache/
-RUN apt-get update && apt-get install -y --no-install-recommends $CCACHE_DEPS
 # Tell the ccache build system not to bother with things like documentation.
 ENV RUN_FROM_BUILD_FARM=yes
 RUN ./autogen.sh
@@ -51,42 +87,35 @@ RUN touch ccache.1
 RUN make DESTDIR=/output install
 
 # Build PTF.
-FROM ubuntu:20.04 as ptf
+FROM base-builder as ptf
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV PTF_DEPS build-essential libpcap-dev python3 python3-dev python3-pip python3-setuptools
 RUN mkdir -p /output/usr/local
 ENV PYTHONUSERBASE=/output/usr/local
 COPY ./ptf /ptf/
 WORKDIR /ptf/
-RUN apt-get update && apt-get install -y --no-install-recommends $PTF_DEPS
-RUN pip3 install --user --ignore-installed wheel
 RUN pip3 install --user --ignore-installed -rrequirements.txt
-RUN pip3 install --user --ignore-installed pypcap
 RUN pip3 install --user --ignore-installed .
 
 # Build nanomsg.
-FROM ubuntu:20.04 as nanomsg
+FROM base-builder as nanomsg
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV NANOMSG_DEPS build-essential cmake
 ENV CFLAGS="-Os"
 ENV CXXFLAGS="-Os"
 ENV LDFLAGS="-Wl,-s"
 RUN mkdir /output
 COPY ./nanomsg /nanomsg/
 WORKDIR /nanomsg/
-RUN apt-get update && apt-get install -y --no-install-recommends $NANOMSG_DEPS
 RUN mkdir build
 WORKDIR /nanomsg/build/
 RUN cmake ..
 RUN make DESTDIR=/output install
 
 # Build nnpy.
-FROM ubuntu:20.04 as nnpy
+FROM base-builder as nnpy
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV NNPY_DEPS build-essential libffi-dev python3 python3-dev python3-pip python3-setuptools
 ENV CFLAGS="-Os"
 ENV CXXFLAGS="-Os"
 ENV LDFLAGS="-Wl,-s"
@@ -95,29 +124,12 @@ ENV PYTHONUSERBASE=/output/usr/local
 COPY --from=nanomsg /output/usr/local /usr/local/
 COPY ./nnpy /nnpy/
 WORKDIR /nnpy/
-RUN apt-get update && apt-get install -y --no-install-recommends $NNPY_DEPS
-RUN pip3 install --user --ignore-installed wheel
-RUN pip3 install --user --ignore-installed cffi
 RUN pip3 install --user --ignore-installed .
 
 # Build Thrift.
-FROM ubuntu:20.04 as thrift
+FROM base-builder as thrift
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV THRIFT_DEPS automake \
-                bison \
-                build-essential \
-                flex \
-                libboost-dev \
-                libboost-test-dev \
-                libevent-dev \
-                libssl-dev \
-                libtool \
-                pkg-config \
-                python3 \
-                python3-dev \
-                python3-pip \
-                python3-setuptools
 ENV CFLAGS="-Os"
 ENV CXXFLAGS="-Os"
 ENV LDFLAGS="-Wl,-s"
@@ -125,7 +137,6 @@ RUN mkdir -p /output/usr/local
 ENV PYTHONUSERBASE=/output/usr/local
 COPY ./thrift /thrift/
 WORKDIR /thrift/
-RUN apt-get update && apt-get install -y --no-install-recommends $THRIFT_DEPS
 RUN ./bootstrap.sh
 RUN ./configure --with-cpp=yes \
                 --with-python=yes \
@@ -142,19 +153,9 @@ WORKDIR /thrift/lib/py/
 RUN pip3 install --user --ignore-installed .
 
 # Build Protocol Buffers.
-FROM ubuntu:20.04 as protobuf
+FROM base-builder as protobuf
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV PROTOCOL_BUFFERS_DEPS autoconf \
-                          automake \
-                          ca-certificates \
-                          g++ \
-                          libffi-dev \
-                          libtool \
-                          make \
-                          python3-dev \
-                          python3-setuptools \
-                          python3-pip
 ENV CFLAGS="-Os"
 ENV CXXFLAGS="-Os"
 ENV LDFLAGS="-Wl,-s"
@@ -162,18 +163,11 @@ RUN mkdir -p /output/usr/local
 ENV PYTHONUSERBASE=/output/usr/local
 COPY ./protobuf /protobuf/
 WORKDIR /protobuf/
-RUN apt-get update && apt-get install -y --no-install-recommends $PROTOCOL_BUFFERS_DEPS
 RUN ./autogen.sh
 RUN ./configure
 RUN make
 RUN make DESTDIR=/output install-strip
 WORKDIR /protobuf/python/
-# Protobuf is using a deprecated technique to install Python package with
-# easy install. This is causing issues since 2021-04-21. (https://discuss.python.org/t/pypi-org-recently-changed/8433)
-# We have to install pip and install six ourselves so we do not trigger the
-# broken protobuf install process.
-RUN pip3 install --user --ignore-installed wheel
-RUN pip3 install --user --ignore-installed six
 RUN python3 setup.py install --user --cpp_implementation
 # We'll finish up the process of building protobuf below, but first, a bit of
 # explanation.
@@ -206,17 +200,9 @@ RUN export PYTHON3_VERSION=`python3 -c 'import sys; version=sys.version_info[:3]
 # The gRPC build system should detect that a version of protobuf is already
 # installed and should not try to install the third-party one included as a
 # submodule in the grpc repository.
-FROM ubuntu:20.04 as grpc
+FROM base-builder as grpc
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV GRPC_DEPS build-essential \
-              cmake \
-              cython \
-              libssl-dev \
-              libtool \
-              python3-dev \
-              python3-pip \
-              python3-setuptools
 ENV LDFLAGS="-Wl,-s"
 RUN mkdir -p /output/usr/local
 ENV PYTHONUSERBASE=/output/usr/local
@@ -224,7 +210,6 @@ COPY --from=protobuf /output/usr/local /usr/local/
 RUN ldconfig
 COPY ./grpc /grpc/
 WORKDIR /grpc/
-RUN apt-get update && apt-get install -y --no-install-recommends $GRPC_DEPS
 # See https://github.com/grpc/grpc/blob/master/BUILDING.md
 RUN mkdir -p cmake/build
 WORKDIR /grpc/cmake/build/
@@ -249,18 +234,14 @@ RUN pip3 install --user -rrequirements.txt
 RUN env GRPC_PYTHON_BUILD_WITH_CYTHON=1 pip3 install --user --ignore-installed .
 
 # Build libyang
-FROM ubuntu:20.04 as libyang
+FROM base-builder as libyang
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
-ENV LIBYANG_DEPS build-essential \
-                 cmake \
-                 libpcre3-dev
 ENV CFLAGS="-Os"
 ENV CXXFLAGS="-Os"
 ENV LDFLAGS="-Wl,-s"
 RUN mkdir /output
 COPY ./libyang /libyang/
-RUN apt-get update && apt-get install -y --no-install-recommends $LIBYANG_DEPS
 WORKDIR /libyang/
 RUN mkdir build
 WORKDIR /libyang/build/
@@ -268,19 +249,13 @@ RUN cmake ..
 RUN make DESTDIR=/output install
 
 # Build sysrepo
-FROM ubuntu:20.04 as sysrepo
+FROM base-builder as sysrepo
 ARG DEBIAN_FRONTEND=noninteractive
 ARG MAKEFLAGS=-j2
 # protobuf-c is not installed as part of the protobuf image build above (it is a
 # separate Github repository). It seems that installing it from the package
 # manager rather than building it from source does not create any compatibility
 # issue.
-ENV SYSREPO_DEPS build-essential \
-                 cmake \
-                 libavl-dev \
-                 libev-dev \
-                 libprotobuf-c-dev \
-                 protobuf-c-compiler
 ENV CFLAGS="-Os"
 ENV CXXFLAGS="-Os"
 ENV LDFLAGS="-Wl,-s"
@@ -288,7 +263,6 @@ RUN mkdir /output
 COPY --from=libyang /output/usr/local /usr/local/
 RUN ldconfig
 COPY ./sysrepo /sysrepo/
-RUN apt-get update && apt-get install -y --no-install-recommends $SYSREPO_DEPS
 WORKDIR /sysrepo/
 RUN mkdir build
 WORKDIR /sysrepo/build/
